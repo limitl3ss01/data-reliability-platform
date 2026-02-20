@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+
+# OS
+.DS_Store
+
+# Docker
+*.log
+docker-data/
+volumes/
+
+# DuckDB / data artifacts
+*.duckdb
+data/
+*.parquet
+
+# Prefect
+.prefect/
+
+# IDE
+.vscode/
+.idea/
+
+# pytest
+.pytest_cache/
+
+# Mac
+*.swp

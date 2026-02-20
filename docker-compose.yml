@@ -1,0 +1,133 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: drp-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - drp_net
+
+  prefect:
+    image: prefecthq/prefect:2-python3.12
+    container_name: drp-prefect
+    command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+    ports:
+      - "${PREFECT_PORT:-4200}:4200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - drp_net
+
+  api-generator:
+    build:
+      context: .
+      dockerfile: infra/docker/api-generator.Dockerfile
+    container_name: drp-api-generator
+    environment:
+      APP_ENV: ${APP_ENV}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      API_PORT: ${API_PORT:-8000}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - drp_net
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: infra/docker/pipeline.Dockerfile
+    container_name: drp-pipeline
+    environment:
+      APP_ENV: ${APP_ENV}
+      PREFECT_API_URL: http://prefect:4200/api
+      PREFECT_WORK_POOL: ${PREFECT_WORK_POOL:-drp-default-pool}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      RAW_SCHEMA: ${RAW_SCHEMA:-raw}
+      RAW_ORDERS_TABLE: ${RAW_ORDERS_TABLE:-orders_raw}
+      API_BASE_URL: ${API_BASE_URL:-http://api-generator:8000}
+      API_ORDERS_ENDPOINT: ${API_ORDERS_ENDPOINT:-/v1/orders}
+      INGEST_BATCH_SIZE: ${INGEST_BATCH_SIZE:-100}
+      TRANSFORM_SOURCE_LIMIT: ${TRANSFORM_SOURCE_LIMIT:-5000}
+      SOURCE_SYSTEM: ${SOURCE_SYSTEM:-fastapi-orders-api}
+      OBSERVABILITY_SCHEMA: ${OBSERVABILITY_SCHEMA:-ops}
+      FLOW_AUDIT_TABLE: ${FLOW_AUDIT_TABLE:-pipeline_flow_audit}
+      ALERT_ON_FAILURE: ${ALERT_ON_FAILURE:-true}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      OBJECT_STORE_ENABLED: ${OBJECT_STORE_ENABLED:-true}
+      OBJECT_STORE_REQUIRED: ${OBJECT_STORE_REQUIRED:-false}
+      OBJECT_STORE_ENDPOINT_URL: ${OBJECT_STORE_ENDPOINT_URL:-http://minio:9000}
+      OBJECT_STORE_REGION: ${OBJECT_STORE_REGION:-us-east-1}
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-drp-lakehouse}
+      OBJECT_STORE_ACCESS_KEY_ID: ${OBJECT_STORE_ACCESS_KEY_ID:-minioadmin}
+      OBJECT_STORE_SECRET_ACCESS_KEY: ${OBJECT_STORE_SECRET_ACCESS_KEY:-minioadmin}
+      OBJECT_STORE_SECURE: ${OBJECT_STORE_SECURE:-false}
+      OBJECT_STORE_RAW_PREFIX: ${OBJECT_STORE_RAW_PREFIX:-raw/orders}
+      OBJECT_STORE_ANALYTICS_PREFIX: ${OBJECT_STORE_ANALYTICS_PREFIX:-analytics/orders}
+      DUCKDB_PATH: ${DUCKDB_PATH}
+    volumes:
+      - duckdb_data:/app/data
+    depends_on:
+      prefect:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - drp_net
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: drp-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${OBJECT_STORE_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${OBJECT_STORE_SECRET_ACCESS_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+    networks:
+      - drp_net
+
+volumes:
+  postgres_data:
+  duckdb_data:
+  minio_data:
+
+networks:
+  drp_net:
+    name: drp_net

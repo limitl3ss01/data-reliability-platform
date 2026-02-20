@@ -1,0 +1,19 @@
+name: data-reliability-platform
+prefect-version: "2.19.0"
+
+deployments:
+  - name: ingest-orders-to-raw
+    version: "1"
+    description: Ingest orders from API source into PostgreSQL raw layer.
+    tags: ["ingestion", "raw", "orders"]
+    entrypoint: src/drp/orchestration/prefect/flows/ingest_orders_flow.py:ingest_orders_to_raw_flow
+    parameters: {}
+    schedule: null
+
+  - name: stage-and-validate-orders
+    version: "1"
+    description: Build DuckDB staging/analytics and run quality checks.
+    tags: ["transform", "analytics", "quality", "orders"]
+    entrypoint: src/drp/orchestration/prefect/flows/stage_and_validate_orders_flow.py:stage_and_validate_orders_flow
+    parameters: {}
+    schedule: null

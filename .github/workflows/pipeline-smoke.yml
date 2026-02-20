@@ -1,0 +1,59 @@
+name: Pipeline Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "docker-compose.yml"
+      - "infra/docker/**"
+      - ".env.example"
+
+jobs:
+  smoke:
+    name: End-to-End Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start platform containers
+        run: docker compose --env-file .env.example up --build -d
+
+      - name: Wait for API generator health
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "api-generator did not become healthy in time"
+          exit 1
+
+      - name: Run full pipeline
+        run: docker compose --env-file .env.example exec -T pipeline bash /app/scripts/run-full-pipeline.sh
+
+      - name: Assert raw rows exist in PostgreSQL
+        run: |
+          set -a
+          source .env.example
+          set +a
+          docker compose --env-file .env.example exec -T postgres \
+            psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -tAc \
+            "SELECT COUNT(*) FROM ${RAW_SCHEMA}.${RAW_ORDERS_TABLE};" | awk '{ if ($1 > 0) exit 0; else exit 1 }'
+
+      - name: Assert analytics rows exist in DuckDB
+        run: |
+          docker compose --env-file .env.example exec -T pipeline \
+            python -c "import duckdb; c=duckdb.connect('/app/data/analytics/warehouse.duckdb'); n=c.execute('select count(*) from analytics.daily_order_metrics').fetchone()[0]; assert n > 0"
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose --env-file .env.example logs
+
+      - name: Shutdown stack
+        if: always()
+        run: docker compose --env-file .env.example down -v

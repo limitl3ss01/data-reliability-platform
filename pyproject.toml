@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-reliability-platform"
+version = "0.1.0"
+description = "Production-like data reliability platform scaffold"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "prefect==2.20.18",
+  "pydantic-settings>=2.4.0",
+  "requests>=2.32.0",
+  "boto3>=1.35.0",
+  "psycopg[binary]>=3.2.0",
+  "duckdb>=1.0.0",
+  "great-expectations>=0.18.0,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.6.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
