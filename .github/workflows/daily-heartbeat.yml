@@ -2,7 +2,8 @@ name: Daily Heartbeat
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    # Every minute; job runs only when current (hour, minute) matches one of today's 2–8 slots
+    - cron: "* * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -34,55 +35,35 @@ jobs:
           date = os.environ["DATE"]
           seed = f"{repo}{date}"
           h = hashlib.sha256(seed.encode()).hexdigest()
+          # 2–8 runs per day
           run_count = 2 + (int(h[:8], 16) % 7)
+          # Deterministic random (hour, minute) slots for today
           order = list(range(24))
           order.sort(key=lambda i: hashlib.sha256(f"{seed}{i}".encode()).hexdigest())
-          allowed = sorted(order[:run_count])
-          allowed_str = ",".join(f"{h:02d}" for h in allowed)
+          hours = sorted(order[:run_count])
+          slots = []
+          for hr in hours:
+            mh = hashlib.sha256(f"{seed}{hr}min".encode()).hexdigest()
+            minute = int(mh[:4], 16) % 60
+            slots.append(f"{hr:02d}:{minute:02d}")
+          allowed_slots_str = ",".join(slots)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
             f.write(f"run_count={run_count}\n")
-            f.write(f"allowed_hours={allowed_str}\n")
+            f.write(f"allowed_slots={allowed_slots_str}\n")
           PY
 
-      - name: Skip if not an execution hour
+      - name: Skip if not an execution slot
         id: skip
         run: |
           set -euo pipefail
-          CURRENT_HOUR=$(date -u +%H)
-          ALLOWED="${{ steps.schedule.outputs.allowed_hours }}"
-          if [[ ",${ALLOWED}," != *",${CURRENT_HOUR},"* ]]; then
+          CURRENT=$(date -u +%H:%M)
+          SLOTS="${{ steps.schedule.outputs.allowed_slots }}"
+          if [[ ",${SLOTS}," != *",${CURRENT},"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipping: hour ${CURRENT_HOUR} not in [${ALLOWED}]"
+            echo "Skipping: ${CURRENT} not in [${SLOTS}]"
             exit 0
           fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Compute jitter
-        if: steps.skip.outputs.skip != 'true'
-        id: jitter
-        run: |
-          set -euo pipefail
-          export DATE="${{ steps.schedule.outputs.date }}"
-          export CURRENT_HOUR=$(date -u +%H)
-          python3 << 'PY'
-          import hashlib
-          import os
-          repo = os.environ["GITHUB_REPOSITORY"]
-          date = os.environ["DATE"]
-          hour = os.environ["CURRENT_HOUR"]
-          seed = f"{repo}{date}jitter{hour}"
-          h = hashlib.sha256(seed.encode()).hexdigest()
-          jitter_min = int(h[:4], 16) % 60
-          jitter_seconds = jitter_min * 60
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-            f.write(f"jitter_seconds={jitter_seconds}\n")
-          PY
-
-      - name: Apply jitter
-        if: steps.skip.outputs.skip != 'true'
-        run: |
-          set -euo pipefail
-          sleep ${{ steps.jitter.outputs.jitter_seconds }}
 
       - name: Generate repo-health.json
         if: steps.skip.outputs.skip != 'true'
@@ -113,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           DATE="${{ steps.schedule.outputs.date }}"
-          CURRENT_HOUR=$(date -u +%H)
+          CURRENT=$(date -u +%H:%M)
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add repo-health.json
@@ -121,6 +102,6 @@ jobs:
             echo "No changes to repo-health.json"
             exit 0
           fi
-          git commit -m "chore(health): repository status update ${DATE} ${CURRENT_HOUR}"
+          git commit -m "chore(health): repository status update ${DATE} ${CURRENT}"
           git push
 
